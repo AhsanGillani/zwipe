@@ -5,9 +5,9 @@ import joblib
 from firebase_admin import credentials, firestore, initialize_app
 from google.cloud.firestore_v1.base_query import FieldFilter
 from datetime import datetime
-
+import os
 # Initialize Firebase
-cred = credentials.Certificate("api/credentials.json")
+cred = credentials.Certificate(r"C:\Users\Muhammad Arslan\Desktop\vehicle_recommender\api\active zwipe credentials.json")
 initialize_app(cred)
 db = firestore.client()
 
@@ -15,7 +15,7 @@ def fetch_new_data(last_timestamp):
 
     print(last_timestamp)
     docs = db.collection('motors')\
-        .where(filter=FieldFilter("createdDate", ">", last_timestamp))\
+        .where(filter=FieldFilter("createdDate", ">=", last_timestamp))\
         .stream()
 
     data = []
@@ -43,7 +43,7 @@ def train_and_save_model():
         
     except:
         old_df = pd.DataFrame()
-        last_timestamp = "14 March 2025 at 19:33:31 UTC+5"
+        last_timestamp = "2025-04-06 11:41:06.329398+00:00"
 
 
 
@@ -71,9 +71,11 @@ def train_and_save_model():
 
 
 def get_recommendations(title, top_n=5):
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    model_dir = os.path.join(base_dir, 'recommender_model')
     try:
-        df = joblib.load("api/recommender_model/vehicle_data.pkl")
-        cosine_sim = joblib.load("api/recommender_model/cosine_sim.pkl")
+        df = joblib.load(os.path.join(model_dir, 'vehicle_data.pkl'))
+        cosine_sim = joblib.load(os.path.join(model_dir, 'cosine_sim.pkl'))
     except:
         return []
 

@@ -7,7 +7,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from datetime import datetime
 
 # Initialize Firebase
-cred = credentials.Certificate(r"C:\Users\Muhammad Arslan\Desktop\vehicle_recommender\api\active zwipe credentials.json")
+cred = credentials.Certificate("api/credentials.json")
 initialize_app(cred)
 db = firestore.client()
 
@@ -72,8 +72,8 @@ def train_and_save_model():
 
 def get_recommendations(title, top_n=5):
     try:
-        df = joblib.load(r"api\recommender_model\vehicle_data.pkl")
-        cosine_sim = joblib.load(r"api\recommender_model\cosine_sim.pkl")
+        df = joblib.load("api/recommender_model/vehicle_data.pkl")
+        cosine_sim = joblib.load("api/recommender_model/cosine_sim.pkl")
     except:
         return []
 

@@ -7,7 +7,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from datetime import datetime
 import os
 # Initialize Firebase
-cred = credentials.Certificate(r"C:\Users\Muhammad Arslan\Desktop\vehicle_recommender\api\active zwipe credentials.json")
+cred = credentials.Certificate("credentials.json")
 initialize_app(cred)
 db = firestore.client()
 

@@ -6,8 +6,13 @@ from firebase_admin import credentials, firestore, initialize_app
 from google.cloud.firestore_v1.base_query import FieldFilter
 from datetime import datetime
 import os
+from django.conf import settings
+import numpy as np
+import os
+from django.conf import settings
+    
 # Initialize Firebase
-cred = credentials.Certificate("credentials.json")
+cred = credentials.Certificate("api/credentials.json")
 initialize_app(cred)
 db = firestore.client()
 
@@ -15,7 +20,7 @@ def fetch_new_data(last_timestamp):
 
     print(last_timestamp)
     docs = db.collection('motors')\
-        .where(filter=FieldFilter("createdDate", ">=", last_timestamp))\
+        .where(filter=FieldFilter("createdDate", ">", last_timestamp))\
         .stream()
 
     data = []
@@ -24,9 +29,6 @@ def fetch_new_data(last_timestamp):
         item['doc_id'] = doc.id
         item['createdDate'] = item['createdDate']
         data.append(item)
-
-
-    
   
     return pd.DataFrame(data)
 
@@ -36,23 +38,34 @@ def combine_features(row):
 
 
 def train_and_save_model():
+
+
     try:
-        old_df = joblib.load("api/recommender_model/vehicle_data.pkl")
-        print(len(old_df))
+        model_dir = os.path.join(settings.BASE_DIR, 'api', 'recommender_model')
+        old_df = joblib.load(os.path.join(model_dir, 'vehicle_data.pkl'))
+        print("Length of old dataset", len(old_df))
+
+        # Ensure createdDate is in datetime format
+        old_df['createdDate'] = pd.to_datetime(old_df['createdDate'], errors='coerce')
         last_timestamp = old_df['createdDate'].max()
-        
-    except:
+
+        # If last_timestamp is NaT, use default datetime
+        if pd.isna(last_timestamp):
+            print("last_timestamp is NaT. Using default datetime.")
+            last_timestamp = pd.Timestamp("2000-01-01 00:00:00")
+
+    except Exception as e:
+        print("Error loading existing model:", e)
         old_df = pd.DataFrame()
-        last_timestamp = "2025-04-06 11:41:06.329398+00:00"
+        last_timestamp = pd.Timestamp("2000-01-01 00:00:00")  # Default starting point
 
-
-
+    # Fetch new data from Firestore
     new_data = fetch_new_data(last_timestamp)
-    print(new_data)
-    print(len(new_data))
+
     if new_data.empty:
         return "No new data to train."
 
+    # Merge old and new data
     df = pd.concat([old_df, new_data], ignore_index=True)
     df.fillna('', inplace=True)
     df['text'] = df.apply(combine_features, axis=1)
@@ -61,30 +74,60 @@ def train_and_save_model():
     tfidf_matrix = tfidf.fit_transform(df['text'])
     cosine_sim = cosine_similarity(tfidf_matrix, tfidf_matrix)
 
-    joblib.dump(df, "api/recommender_model/vehicle_data.pkl")
-    joblib.dump(tfidf, "api/recommender_model/vectorizer.pkl")
-    joblib.dump(cosine_sim, "api/recommender_model/cosine_sim.pkl")
+    df = df.drop(columns=['relatedUser'], errors='ignore')
+
+    # Save everything
+    joblib.dump(df, os.path.join(model_dir, 'vehicle_data.pkl'))
+    joblib.dump(tfidf, os.path.join(model_dir, 'vectorizer.pkl'))
+    joblib.dump(cosine_sim, os.path.join(model_dir, 'cosine_sim.pkl'))
+
     return f"Model trained on {len(df)} total items."
 
 
 
+def get_recommendations(title, top_n=4):
 
 
-def get_recommendations(title, top_n=5):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     model_dir = os.path.join(base_dir, 'recommender_model')
+
     try:
         df = joblib.load(os.path.join(model_dir, 'vehicle_data.pkl'))
         cosine_sim = joblib.load(os.path.join(model_dir, 'cosine_sim.pkl'))
-    except:
-        return []
+    except Exception as e:
+        print("Model loading failed:", str(e))
+        return {}
 
-    indices = pd.Series(df.index, index=df['title']).drop_duplicates()
+    df['title'] = df['title'].astype(str)
+    indices = pd.Series(df.index, index=df['title'])
+
     if title not in indices:
-        return []
+        print(f"Title '{title}' not found in dataset.")
+        return {}
 
-    idx = indices[title]
-    sim_scores = list(enumerate(cosine_sim[idx]))
-    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)[1:top_n+1]
-    vehicle_indices = [i[0] for i in sim_scores]
-    return df.iloc[vehicle_indices][['doc_id', 'title', 'carMake', 'carModel']].to_dict(orient='records')
+    try:
+        if isinstance(indices[title], pd.Series):
+            idx = indices[title].iloc[0]
+        else:
+            idx = indices[title]
+
+        # Get the query product info
+        query_product_info = df.iloc[idx][['doc_id', 'title']].to_dict()
+
+        # Get similarity scores
+        sim_scores = list(enumerate(cosine_sim[int(idx)]))
+        sim_scores = sorted(sim_scores, key=lambda x: float(x[1]), reverse=True)[1:top_n + 1]
+
+        vehicle_indices = [i[0] for i in sim_scores if isinstance(i[0], (int, np.integer)) and i[0] < len(df)]
+
+        recommendations = df.iloc[vehicle_indices][['doc_id', 'title', 'carMake', 'carModel']]
+        recommendations = recommendations.drop_duplicates(subset='title')
+
+        return {
+            "queryProduct": query_product_info,
+            "recommendations": recommendations.to_dict(orient='records')
+        }
+
+    except Exception as e:
+        print("Error during recommendation processing:", str(e))
+        return {}
